@@ -22,7 +22,7 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub(crate) struct ProcMacroServerProcess {
+pub struct ProcMacroServerProcess {
     /// The state of the proc-macro server process, the protocol is currently strictly sequential
     /// hence the lock on the state.
     state: Mutex<ProcessSrvState>,
@@ -127,7 +127,7 @@ impl ProcMacroServerProcess {
         }
     }
 
-    pub(crate) fn send_task(&self, req: Request) -> Result<Response, ServerError> {
+    pub fn send_task(&self, req: Request) -> Result<Response, ServerError> {
         if let Some(server_error) = self.exited.get() {
             return Err(server_error.0.clone());
         }

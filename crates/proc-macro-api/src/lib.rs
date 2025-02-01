@@ -42,7 +42,7 @@ pub struct ProcMacroClient {
     ///
     /// That means that concurrent salsa requests may block each other when expanding proc macros,
     /// which is unfortunate, but simple and good enough for the time being.
-    process: Arc<ProcMacroServerProcess>,
+    pub process: Arc<ProcMacroServerProcess>,
     path: AbsPathBuf,
 }
 
