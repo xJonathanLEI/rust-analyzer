@@ -88,6 +88,10 @@ impl ProcMacroServerProcess {
         }
     }
 
+    pub(crate) fn exit(&self) {
+        self.state.lock().unwrap().process.child.kill().unwrap();
+    }
+
     /// Returns the server error if the process has exited.
     pub(crate) fn exited(&self) -> Option<&ServerError> {
         self.exited.get().map(|it| &it.0)

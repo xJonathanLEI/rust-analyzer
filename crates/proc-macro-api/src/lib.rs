@@ -12,6 +12,7 @@ pub mod legacy_protocol {
 mod process;
 
 use paths::{AbsPath, AbsPathBuf};
+use rustc_hash::FxHashMap;
 use span::Span;
 use std::{fmt, io, sync::Arc, time::SystemTime};
 
@@ -46,6 +47,7 @@ pub struct ProcMacroClient {
     /// That means that concurrent salsa requests may block each other when expanding proc macros,
     /// which is unfortunate, but simple and good enough for the time being.
     process: Arc<ProcMacroServerProcess>,
+    extra_env: FxHashMap<std::ffi::OsString, Option<std::ffi::OsString>>,
     path: AbsPathBuf,
 }
 
@@ -67,7 +69,8 @@ impl MacroDylib {
 /// we share a single expander process for all macros within a workspace.
 #[derive(Debug, Clone)]
 pub struct ProcMacro {
-    process: Arc<ProcMacroServerProcess>,
+    server_path: AbsPathBuf,
+    extra_env: FxHashMap<std::ffi::OsString, Option<std::ffi::OsString>>,
     dylib_path: Arc<AbsPathBuf>,
     name: Box<str>,
     kind: ProcMacroKind,
@@ -81,7 +84,6 @@ impl PartialEq for ProcMacro {
             && self.kind == other.kind
             && self.dylib_path == other.dylib_path
             && self.dylib_last_modified == other.dylib_last_modified
-            && Arc::ptr_eq(&self.process, &other.process)
     }
 }
 
@@ -111,8 +113,17 @@ impl ProcMacroClient {
             Item = (impl AsRef<std::ffi::OsStr>, &'a Option<impl 'a + AsRef<std::ffi::OsStr>>),
         > + Clone,
     ) -> io::Result<ProcMacroClient> {
-        let process = ProcMacroServerProcess::run(process_path, env)?;
-        Ok(ProcMacroClient { process: Arc::new(process), path: process_path.to_owned() })
+        let process = ProcMacroServerProcess::run(process_path, env.clone())?;
+        Ok(ProcMacroClient {
+            process: Arc::new(process),
+            extra_env: FxHashMap::from_iter(env.into_iter().map(|(key, value)| {
+                (
+                    key.as_ref().to_owned(),
+                    value.as_ref().to_owned().map(|inner| inner.as_ref().to_owned()),
+                )
+            })),
+            path: process_path.to_owned(),
+        })
     }
 
     /// Returns the absolute path to the proc-macro server.
@@ -133,7 +144,8 @@ impl ProcMacroClient {
             Ok(macros) => Ok(macros
                 .into_iter()
                 .map(|(name, kind)| ProcMacro {
-                    process: self.process.clone(),
+                    server_path: self.path.clone(),
+                    extra_env: self.extra_env.clone(),
                     name: name.into(),
                     kind,
                     dylib_path: dylib_path.clone(),
@@ -173,7 +185,11 @@ impl ProcMacro {
         mixed_site: Span,
         current_dir: String,
     ) -> Result<Result<tt::TopSubtree<Span>, PanicMessage>, ServerError> {
-        let version = self.process.version();
+        // Temp workaround for:
+        // https://github.com/termux/termux-packages/issues/23087
+        let process = ProcMacroServerProcess::run(&self.server_path, &self.extra_env).unwrap();
+
+        let version = process.version();
 
         let mut span_data_table = SpanDataIndexMap::default();
         let def_site = span_data_table.insert_full(def_site).0;
@@ -202,7 +218,8 @@ impl ProcMacro {
             current_dir: Some(current_dir),
         };
 
-        let response = self.process.send_task(Request::ExpandMacro(Box::new(task)))?;
+        let response = process.send_task(Request::ExpandMacro(Box::new(task)))?;
+        process.exit();
 
         match response {
             Response::ExpandMacro(it) => {
